@@ -1,5 +1,7 @@
 # TTRSS OpenAI 自动标签插件
 
+![Plugin Screenshot](Screenshot.png)
+
 使用 OpenAI 的 GPT 模型为您的 Tiny Tiny RSS 文章自动添加标签。该插件通过分析文章内容，基于已有标签和内容分析来推荐相关标签。
 
 ## 功能特点

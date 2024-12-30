@@ -2,6 +2,7 @@
 
 [English](README.md)  | [中文](README_zh.md)
 
+![Plugin Screenshot](Screenshot.png)
 
 Automatically label your Tiny Tiny RSS articles using OpenAI's GPT models. This plugin analyzes article content and suggests relevant labels based on existing tags and content analysis.
 
