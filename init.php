@@ -206,7 +206,7 @@ class OpenAI_Auto_Labels extends Plugin {
         $openai_api_key = $this->host->get($this, "openai_api_key");
         $label_language = $this->host->get($this, "label_language");
         $openai_base_url = $this->host->get($this, "openai_base_url", "https://api.openai.com/v1");
-        $openai_model = $this->host->get($this, "openai_model", "gpt-3.5-turbo");
+        $openai_model = $this->host->get($this, "openai_model", "gpt-4o-mini");
         $max_labels = $this->host->get($this, "max_labels", 5);
         $max_text_length = $this->host->get($this, "max_text_length", 1500);
 
