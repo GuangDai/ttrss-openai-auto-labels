@@ -10,7 +10,7 @@ class OpenAI_Auto_Labels extends Plugin {
     protected $pdo;
 
     function about() {
-        return array(1.0,
+        return array(1.1,
             "Automatically assign labels to articles using OpenAI API",
             "fangd123");
     }
@@ -36,6 +36,19 @@ class OpenAI_Auto_Labels extends Plugin {
 
         $host->add_hook($host::HOOK_ARTICLE_FILTER, $this);
         $host->add_hook($host::HOOK_PREFS_TAB, $this);
+    }
+
+    // 新增：获取用户所有已有的标签
+    private function get_existing_labels($owner_uid) {
+        $sth = $this->pdo->prepare("SELECT caption FROM ttrss_labels2 WHERE owner_uid = ?");
+        $sth->execute([$owner_uid]);
+
+        $labels = array();
+        while ($row = $sth->fetch()) {
+            $labels[] = $row['caption'];
+        }
+
+        return $labels;
     }
 
     private function call_openai_api($text, $existing_labels) {
@@ -182,6 +195,124 @@ class OpenAI_Auto_Labels extends Plugin {
         return array();
     }
 
+        private $colors = [];
+
+    private function initialize_colors() {
+        // Generate colors based on the same quantization as colorPalette function
+        for ($r = 0; $r <= 0xFF; $r += 0x33) {
+            for ($g = 0; $g <= 0xFF; $g += 0x33) {
+                for ($b = 0; $b <= 0xFF; $b += 0x33) {
+                    $this->colors[] = sprintf('%02X%02X%02X', $r, $g, $b);
+                }
+            }
+        }
+    }
+
+    private function generate_random_color() {
+        if (empty($this->colors)) {
+            $this->initialize_colors();
+        }
+
+        // Select two different colors
+        $color_indices = array_rand($this->colors, 2);
+
+        // Calculate perceived brightness for both colors
+        $fg_color = $this->colors[$color_indices[0]];
+        $bg_color = $this->colors[$color_indices[1]];
+
+        // Convert hex to RGB and calculate brightness
+        $fg_brightness = $this->get_brightness($fg_color);
+        $bg_brightness = $this->get_brightness($bg_color);
+
+        // Ensure adequate contrast by swapping if necessary
+        if (abs($fg_brightness - $bg_brightness) < 125) {
+            // If contrast is too low, select darker color for foreground
+            if ($fg_brightness > $bg_brightness) {
+                list($fg_color, $bg_color) = array($bg_color, $fg_color);
+            }
+        }
+
+        return array($fg_color, $bg_color);
+    }
+
+    private function get_brightness($hex_color) {
+        // Convert hex to RGB
+        $r = hexdec(substr($hex_color, 0, 2));
+        $g = hexdec(substr($hex_color, 2, 2));
+        $b = hexdec(substr($hex_color, 4, 2));
+
+        // Calculate perceived brightness
+        // Using ITU-R BT.709 coefficients
+        return (($r * 299) + ($g * 587) + ($b * 114)) / 1000;
+    }
+
+    private function get_or_create_label($caption, $owner_uid) {
+        $sth = $this->pdo->prepare("SELECT id, fg_color, bg_color FROM ttrss_labels2
+            WHERE caption = ? AND owner_uid = ?");
+        $sth->execute([$caption, $owner_uid]);
+
+        if ($row = $sth->fetch()) {
+            return array(
+                Labels::label_to_feed_id($row["id"]),
+                $caption,
+                $row["fg_color"],
+                $row["bg_color"]
+            );
+        }
+
+        // 生成随机颜色
+        list($fg_color, $bg_color) = $this->generate_random_color();
+
+        // 如果标签不存在，创建新标签
+        $sth = $this->pdo->prepare("INSERT INTO ttrss_labels2
+            (caption, owner_uid, fg_color, bg_color)
+            VALUES (?, ?, ?, ?)");
+
+        $sth->execute([$caption, $owner_uid, $fg_color, $bg_color]);
+        $label_id = $this->pdo->lastInsertId();
+
+        return array(
+            Labels::label_to_feed_id($label_id),
+            $caption,
+            $fg_color,
+            $bg_color
+        );
+    }
+
+    function hook_article_filter($article) {
+        if (!$this->openai_api_key) {
+            return $article;
+        }
+
+
+        $owner_uid = $article["owner_uid"];
+        $content = $article["title"] . "\n" . strip_tags($article["content"]);
+
+        // 获取现有标签
+        $existing_labels = $this->get_existing_labels($owner_uid);
+
+        // 调用OpenAI API获取标签，传入现有标签
+        $suggested_tags = $this->call_openai_api($content, $existing_labels);
+
+        if (!empty($suggested_tags)) {
+            foreach ($suggested_tags as $tag) {
+                $label = $this->get_or_create_label($tag, $owner_uid);
+
+                // 检查文章是否已经有这个标签
+                if (!RSSUtils::labels_contains_caption($article["labels"], $label[1])) {
+                    array_push($article["labels"], $label);
+                }
+            }
+        }
+
+        return $article;
+    }
+
+    function api_version() {
+        return 2;
+    }
+
+
     function hook_prefs_tab($args) {
         if ($args != "prefFeeds") return;
 
@@ -310,9 +441,5 @@ class OpenAI_Auto_Labels extends Plugin {
         $this->host->set($this, "max_labels", (int)$_POST["max_labels"]);
         $this->host->set($this, "max_text_length", (int)$_POST["max_text_length"]);
         echo __("Settings have been saved.");
-    }
-
-    function api_version() {
-        return 2;
     }
 }

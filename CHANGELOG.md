@@ -2,7 +2,7 @@
 
 All notable changes to the OpenAI Auto Labels TTRSS Plugin will be documented in this file.
 
-## [1.0.1] - 2024-12-31
+## [1.1] - 2024-12-31
 
 ### Added
 - OpenAI API base URL configuration
