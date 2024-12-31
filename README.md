@@ -12,17 +12,16 @@ Automatically label your Tiny Tiny RSS articles using OpenAI's GPT models. This 
 - 🏷️ Smart reuse of existing labels
 - ~~🎨 Automatic color generation for new labels~~
 - 🌍 Configurable label language
-- 🔄 Up to 5 labels per article
-- ⚡ Efficient API usage with content truncation
-- 🎯 Precise error handling and logging
+- 🔄 Customizable number of labels per article (1-10)
+- ⚡ Configurable API endpoint and model selection
+- 📝 Adjustable content length for analysis (500-4000 characters)
+- 🎯 Comprehensive error handling and logging
 
 **Warning:** Automatic color generation for new labels is temporarily unavailable. For some reason, the functionality code is not working as intended. If you are interested in resolving this issue, contributions to the code are welcome!
 
 ## Requirements
 
-- Tiny Tiny RSS v2.0.0 or higher
-- PHP 7.4 or higher
-- OpenAI API key
+- Tiny Tiny RSS v21.0.0 or higher
 
 ## Installation
 
@@ -30,7 +29,7 @@ Automatically label your Tiny Tiny RSS articles using OpenAI's GPT models. This 
 2. Extract the `openai_auto_labels` folder to your TTRSS plugins directory:
    ```bash
    cd /path/to/ttrss/plugins
-   git clone https://github.com/fangd123/ttrss-openai-labels.git openai_auto_labels
+   git clone https://github.com/fangd123/ttrss-openai-auto-labels.git openai_auto_labels
    ```
 3. Enable the plugin in TTRSS Preferences -> Plugins
 4. Configure your OpenAI API key in Preferences -> Feeds -> Plugins -> OpenAI Auto Labels Settings
@@ -39,19 +38,24 @@ Automatically label your Tiny Tiny RSS articles using OpenAI's GPT models. This 
 
 1. Go to Preferences -> Feeds -> OpenAI Auto Labels Settings
 2. Enter your OpenAI API key
-3. Set your preferred label language (defaults to your TTRSS system language)
-   - Use standard language codes like 'en', 'zh-CN', etc.
-   - If your TTRSS system language is set to 'auto', English will be used
+3. Configure your preferences:
+   - Label language (defaults to your TTRSS system language)
+     - Use standard language codes like 'en', 'zh-CN', etc.
+     - If your TTRSS system language is set to 'auto', English will be used
+   - OpenAI API endpoint (defaults to official API)
+   - GPT model selection (defaults to gpt-4o-mini)
+   - Maximum number of labels per article (1-10, default: 5)
+   - Maximum text length for analysis (500-4000 characters, default: 1500)
 
 ## How It Works
 
 1. When a new article is received, the plugin extracts the title and content
-2. Content is truncated to 1500 characters to optimize API usage
+2. Content is truncated to the configured length (default: 1500 characters) to optimize API usage
 3. The plugin retrieves existing labels from your TTRSS installation
-4. OpenAI API analyzes the content and suggests relevant labels
+4. The configured OpenAI model analyzes the content and suggests relevant labels
 5. Labels are either reused from existing ones or created as new
 6. New labels get automatically assigned contrasting colors
-7. Up to 5 most relevant labels are applied to the article
+7. The specified number of most relevant labels are applied to the article
 
 ## Error Handling
 
@@ -94,7 +98,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 If you encounter any issues or have questions, please:
 
-1. Check the [Issues](https://github.com/fangd123/ttrss-openai-labels/issues) page
+1. Check the [Issues](https://github.com/fangd123/ttrss-openai-auto-labels/issues) page
 2. Create a new issue if your problem isn't already listed
 3. Provide as much detail as possible, including:
    - TTRSS version
