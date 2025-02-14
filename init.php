@@ -3,11 +3,18 @@ class OpenAI_Auto_Labels extends Plugin {
     private $host;
     private $openai_api_key;
     private $label_language;
-    private $openai_base_url; // 新增: OpenAI API基础URL
-    private $openai_model;    // 新增: OpenAI模型
-    private $max_labels;      // 新增: 最大标签数
-    private $max_text_length; // 新增: 最大文本长度
+    private $openai_base_url;
+    private $openai_model;
+    private $max_labels;
+    private $max_text_length;
     protected $pdo;
+    
+    // In‑memory queue and rate‐limiting tracking (static so they persist across method calls in a long‑running process)
+    private static $queue = [];
+    private static $request_timestamps = [];
+    
+    // For generating label colors
+    private $colors = [];
 
     function about() {
         return array(1.1,
@@ -19,10 +26,10 @@ class OpenAI_Auto_Labels extends Plugin {
         $this->host = $host;
         $this->openai_api_key = $this->host->get($this, "openai_api_key");
         $this->label_language = $this->host->get($this, "label_language");
-        $this->openai_base_url = $this->host->get($this, "openai_base_url", "https://api.openai.com/v1"); // 默认值
-        $this->openai_model = $this->host->get($this, "openai_model", "gpt-4o-mini"); // 默认值
-        $this->max_labels = (int)$this->host->get($this, "max_labels", 5); // 默认值
-        $this->max_text_length = (int)$this->host->get($this, "max_text_length", 1500); // 默认值
+        $this->openai_base_url = $this->host->get($this, "openai_base_url", "https://api.openai.com/v1");
+        $this->openai_model = $this->host->get($this, "openai_model", "gpt-4o-mini");
+        $this->max_labels = (int)$this->host->get($this, "max_labels", 5);
+        $this->max_text_length = (int)$this->host->get($this, "max_text_length", 1500);
         $this->pdo = Db::pdo();
 
         if (empty($this->label_language)) {
@@ -38,55 +45,54 @@ class OpenAI_Auto_Labels extends Plugin {
         $host->add_hook($host::HOOK_PREFS_TAB, $this);
     }
 
-    // 新增：获取用户所有已有的标签
+    // Retrieve all existing labels for a given user
     private function get_existing_labels($owner_uid) {
         $sth = $this->pdo->prepare("SELECT caption FROM ttrss_labels2 WHERE owner_uid = ?");
         $sth->execute([$owner_uid]);
-
         $labels = array();
         while ($row = $sth->fetch()) {
             $labels[] = $row['caption'];
         }
-
         return $labels;
     }
 
+    // Calls the OpenAI API using the provided text and existing labels.
     private function call_openai_api($text, $existing_labels) {
         $url = rtrim($this->openai_base_url, '/') . '/chat/completions';
 
+        // Truncate text to the allowed maximum length
         $text = mb_substr($text, 0, $this->max_text_length);
 
         $system_prompt = 'You are a bot in a read-it-later app and your responsibility is to help with automatic tagging.';
 
-        // 修改提示，包含现有标签和目标语言
         $existing_labels_json = json_encode($existing_labels, JSON_UNESCAPED_UNICODE);
-        $language = $this->label_language == "auto"? "English" : $this->label_language;
+        $language = ($this->label_language == "auto") ? "English" : $this->label_language;
         $max_labels = $this->max_labels;
 
         $user_prompt = <<<EOT
-    Please analyze the text between the sentences "CONTENT START HERE" and "CONTENT END HERE" and suggest relevant tags. Here are the existing tags in the system:
-    $existing_labels_json
+Please analyze the text between the sentences "CONTENT START HERE" and "CONTENT END HERE" and suggest relevant tags. Here are the existing tags in the system:
+$existing_labels_json
 
-    The rules are:
-    - First, try to use appropriate tags from the existing tags list provided above.
-    - If you can't find suitable existing tags, you can suggest new ones.
-    - Aim for a variety of tags, including broad categories, specific keywords, and potential sub-genres.
-    - The tags language must be in {$language}.
-    - If it's a famous website you may also include a tag for the website. If the tag is not generic enough, don't include it.
-    - The content can include text for cookie consent and privacy policy, ignore those while tagging.
-    - Aim for 1-{$max_labels} tags total (combination of existing and new tags).
-    - If there are no good tags, leave the array empty.
-    - For each tag, specify whether it's from existing tags or newly suggested.
+The rules are:
+- First, try to use appropriate tags from the existing tags list provided above.
+- If you can't find suitable existing tags, you can suggest new ones.
+- Aim for a variety of tags, including broad categories, specific keywords, and potential sub-genres.
+- The tags language must be in {$language}.
+- If it's a famous website you may also include a tag for the website. If the tag is not generic enough, don't include it.
+- The content can include text for cookie consent and privacy policy, ignore those while tagging.
+- Aim for 1-{$max_labels} tags total (combination of existing and new tags).
+- If there are no good tags, leave the array empty.
+- For each tag, specify whether it's from existing tags or newly suggested.
 
-    CONTENT START HERE
+CONTENT START HERE
 
-    {$text}
+{$text}
 
-    CONTENT END HERE
-    You must respond in JSON with two keys:
-    - "existing_tags": array of selected tags from the existing list
-    - "new_tags": array of newly suggested tags
-    EOT;
+CONTENT END HERE
+You must respond in JSON with two keys:
+- "existing_tags": array of selected tags from the existing list
+- "new_tags": array of newly suggested tags
+EOT;
 
         $data = array(
             'model' => $this->openai_model,
@@ -135,7 +141,6 @@ class OpenAI_Auto_Labels extends Plugin {
 
         curl_close($ch);
 
-        // Parse the response to get detailed error information
         $response_data = json_decode($response, true);
 
         if ($http_code !== 200) {
@@ -143,7 +148,6 @@ class OpenAI_Auto_Labels extends Plugin {
             $error_message = isset($response_data['error']['message']) ? $response_data['error']['message'] : 'Unknown error';
             $error_code = isset($response_data['error']['code']) ? $response_data['error']['code'] : 'Unknown error code';
 
-            // Log detailed error information
             Logger::log(E_USER_WARNING, "OpenAI_Auto_Labels", sprintf(
                 "OpenAI API error - Type: %s, Message: %s, Code: %s",
                 $error_type,
@@ -151,7 +155,6 @@ class OpenAI_Auto_Labels extends Plugin {
                 $error_code
             ));
 
-            // Log more specific warnings for certain error types
             if ($error_type === 'invalid_request_error' && strpos($error_message, 'API key') !== false) {
                 Logger::log(E_USER_WARNING, "OpenAI_Auto_Labels", "Invalid or malformed API Key, please check the configured API Key");
             } else if ($error_type === 'invalid_api_key') {
@@ -195,10 +198,8 @@ class OpenAI_Auto_Labels extends Plugin {
         return array();
     }
 
-        private $colors = [];
-
+    // Initialize color palette for labels.
     private function initialize_colors() {
-        // Generate colors based on the same quantization as colorPalette function
         for ($r = 0; $r <= 0xFF; $r += 0x33) {
             for ($g = 0; $g <= 0xFF; $g += 0x33) {
                 for ($b = 0; $b <= 0xFF; $b += 0x33) {
@@ -208,25 +209,19 @@ class OpenAI_Auto_Labels extends Plugin {
         }
     }
 
+    // Generate a pair of random colors ensuring adequate contrast.
     private function generate_random_color() {
         if (empty($this->colors)) {
             $this->initialize_colors();
         }
-
-        // Select two different colors
         $color_indices = array_rand($this->colors, 2);
-
-        // Calculate perceived brightness for both colors
         $fg_color = $this->colors[$color_indices[0]];
         $bg_color = $this->colors[$color_indices[1]];
 
-        // Convert hex to RGB and calculate brightness
         $fg_brightness = $this->get_brightness($fg_color);
         $bg_brightness = $this->get_brightness($bg_color);
 
-        // Ensure adequate contrast by swapping if necessary
         if (abs($fg_brightness - $bg_brightness) < 125) {
-            // If contrast is too low, select darker color for foreground
             if ($fg_brightness > $bg_brightness) {
                 list($fg_color, $bg_color) = array($bg_color, $fg_color);
             }
@@ -235,17 +230,15 @@ class OpenAI_Auto_Labels extends Plugin {
         return array($fg_color, $bg_color);
     }
 
+    // Calculate perceived brightness from a hex color.
     private function get_brightness($hex_color) {
-        // Convert hex to RGB
         $r = hexdec(substr($hex_color, 0, 2));
         $g = hexdec(substr($hex_color, 2, 2));
         $b = hexdec(substr($hex_color, 4, 2));
-
-        // Calculate perceived brightness
-        // Using ITU-R BT.709 coefficients
         return (($r * 299) + ($g * 587) + ($b * 114)) / 1000;
     }
 
+    // Retrieve an existing label or create a new one if it doesn't exist.
     private function get_or_create_label($caption, $owner_uid) {
         $sth = $this->pdo->prepare("SELECT id, fg_color, bg_color FROM ttrss_labels2
             WHERE caption = ? AND owner_uid = ?");
@@ -260,14 +253,11 @@ class OpenAI_Auto_Labels extends Plugin {
             );
         }
 
-        // 生成随机颜色
         list($fg_color, $bg_color) = $this->generate_random_color();
 
-        // 如果标签不存在，创建新标签
         $sth = $this->pdo->prepare("INSERT INTO ttrss_labels2
             (caption, owner_uid, fg_color, bg_color)
             VALUES (?, ?, ?, ?)");
-
         $sth->execute([$caption, $owner_uid, $fg_color, $bg_color]);
         $label_id = $this->pdo->lastInsertId();
 
@@ -279,31 +269,55 @@ class OpenAI_Auto_Labels extends Plugin {
         );
     }
 
-    function hook_article_filter($article) {
-        if (!$this->openai_api_key) {
-            return $article;
+    // Add an article to the in-memory queue.
+    private function add_to_queue($article) {
+        self::$queue[] = $article;
+    }
+
+    // Process one item from the queue, ensuring no more than 12 requests are made per minute.
+    private function process_queue() {
+        if (empty(self::$queue)) {
+            return;
         }
-
-
-        $owner_uid = $article["owner_uid"];
+        
+        $current_time = time();
+        // Remove timestamps older than 60 seconds.
+        self::$request_timestamps = array_filter(self::$request_timestamps, function($timestamp) use ($current_time) {
+            return $timestamp > $current_time - 60;
+        });
+        
+        if (count(self::$request_timestamps) >= 12) {
+            // Rate limit reached; do not process a new request yet.
+            return;
+        }
+        
+        $article = array_shift(self::$queue);
+        $existing_labels = $this->get_existing_labels($article["owner_uid"]);
         $content = $article["title"] . "\n" . strip_tags($article["content"]);
-
-        // 获取现有标签
-        $existing_labels = $this->get_existing_labels($owner_uid);
-
-        // 调用OpenAI API获取标签，传入现有标签
         $suggested_tags = $this->call_openai_api($content, $existing_labels);
-
+        
         if (!empty($suggested_tags)) {
             foreach ($suggested_tags as $tag) {
-                $label = $this->get_or_create_label($tag, $owner_uid);
-
-                // 检查文章是否已经有这个标签
+                $label = $this->get_or_create_label($tag, $article["owner_uid"]);
                 if (!RSSUtils::labels_contains_caption($article["labels"], $label[1])) {
                     array_push($article["labels"], $label);
                 }
             }
         }
+        
+        self::$request_timestamps[] = $current_time;
+    }
+
+    // Hook that is called for each article. Instead of processing immediately,
+    // the article is added to the in-memory queue and the queue is processed
+    // (subject to the rate limit).
+    function hook_article_filter($article) {
+        if (!$this->openai_api_key) {
+            return $article;
+        }
+
+        $this->add_to_queue($article);
+        $this->process_queue();
 
         return $article;
     }
@@ -312,17 +326,14 @@ class OpenAI_Auto_Labels extends Plugin {
         return 2;
     }
 
-
+    // Render the settings tab in the preferences.
     function hook_prefs_tab($args) {
         if ($args != "prefFeeds") return;
 
         print "<div dojoType=\"dijit.layout.AccordionPane\"
             title=\"<i class='material-icons'>label</i> ".__("OpenAI Auto Labels Settings")."\">";
-
         print "<h2>" . __("OpenAI API Configuration") . "</h2>";
-
         print "<form dojoType=\"dijit.form.Form\">";
-
         print "<script type=\"dojo/method\" event=\"onSubmit\" args=\"evt\">
             evt.preventDefault();
             if (this.validate()) {
@@ -331,7 +342,6 @@ class OpenAI_Auto_Labels extends Plugin {
                 });
             }
             </script>";
-
         print \Controls\pluginhandler_tags($this, "save");
 
         $openai_api_key = $this->host->get($this, "openai_api_key");
@@ -346,7 +356,6 @@ class OpenAI_Auto_Labels extends Plugin {
             $label_language = Prefs::get("USER_LANGUAGE", $owner_uid);
         }
 
-        // API Key 设置
         print "<div class=\"form-group\">";
         print "<input dojoType=\"dijit.form.ValidationTextBox\"
             required=\"1\"
@@ -357,7 +366,6 @@ class OpenAI_Auto_Labels extends Plugin {
             __("Your OpenAI API Key") . "</label>";
         print "</div>";
 
-        // API Base URL 设置
         print "<div class=\"form-group\">";
         print "<input dojoType=\"dijit.form.ValidationTextBox\"
             required=\"1\"
@@ -368,7 +376,6 @@ class OpenAI_Auto_Labels extends Plugin {
             __("OpenAI API Base URL") . "</label>";
         print "</div>";
 
-        // 模型设置
         print "<div class=\"form-group\">";
         print "<input dojoType=\"dijit.form.ValidationTextBox\"
             required=\"1\"
@@ -379,7 +386,6 @@ class OpenAI_Auto_Labels extends Plugin {
             __("OpenAI Model") . "</label>";
         print "</div>";
 
-        // 最大标签数设置
         print "<div class=\"form-group\">";
         print "<input dojoType=\"dijit.form.NumberSpinner\"
             required=\"1\"
@@ -392,7 +398,6 @@ class OpenAI_Auto_Labels extends Plugin {
             __("Maximum number of labels") . "</label>";
         print "</div>";
 
-        // 最大文本长度设置
         print "<div class=\"form-group\">";
         print "<input dojoType=\"dijit.form.NumberSpinner\"
             required=\"1\"
@@ -405,7 +410,6 @@ class OpenAI_Auto_Labels extends Plugin {
             __("Maximum text length for analysis") . "</label>";
         print "</div>";
 
-        // 标签语言设置
         print "<div class=\"form-group\">";
         print "<input dojoType=\"dijit.form.ValidationTextBox\"
             required=\"1\"
@@ -433,6 +437,7 @@ class OpenAI_Auto_Labels extends Plugin {
         print "</div>";
     }
 
+    // Save the configuration settings.
     function save() {
         $this->host->set($this, "openai_api_key", $_POST["openai_api_key"]);
         $this->host->set($this, "label_language", $_POST["label_language"]);
@@ -443,3 +448,4 @@ class OpenAI_Auto_Labels extends Plugin {
         echo __("Settings have been saved.");
     }
 }
+?>
