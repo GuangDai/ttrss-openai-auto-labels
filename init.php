@@ -19,7 +19,7 @@ class OpenAI_Auto_Labels extends Plugin {
         $this->host = $host;
         $this->openai_api_key = $this->host->get($this, "openai_api_key");
         $this->label_language = $this->host->get($this, "label_language");
-        $this->openai_base_url = $this->host->get($this, "openai_base_url", "https://api.openai.com/v1"); // 默认值
+        $this->openai_base_url = $this->host->get($this, "openai_base_url", "https://api.openai.com/v1"); // 默认值        
         $this->openai_model = $this->host->get($this, "openai_model", "gpt-4o-mini"); // 默认值
         $this->max_labels = (int)$this->host->get($this, "max_labels", 5); // 默认值
         $this->max_text_length = (int)$this->host->get($this, "max_text_length", 1500); // 默认值
@@ -59,7 +59,8 @@ class OpenAI_Auto_Labels extends Plugin {
         $text = mb_substr($text, 0, $this->max_text_length);
 
         $system_prompt = 'You are a bot in a read-it-later app and your responsibility is to help with automatic tagging.';
-
+        $model_array = ["gemini-2.0-flash-lite-preview-02-05","gemini-2.0-flash","gemini-1.5-flash","gemini-1.5-flash-8b"];
+        $rand_model_key = array_rand($model_array);
         // 修改提示，包含现有标签和目标语言
         // $existing_labels_json = json_encode($existing_labels, JSON_UNESCAPED_UNICODE);
         $language = $this->label_language == "auto"? "English" : $this->label_language;
@@ -90,7 +91,7 @@ class OpenAI_Auto_Labels extends Plugin {
     EOT;
 
         $data = array(
-            'model' => $this->openai_model,
+            'model' => $model_array[$rand_model_key],
             'messages' => array(
                 array(
                     'role' => 'system',
