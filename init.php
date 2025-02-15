@@ -39,21 +39,21 @@ class OpenAI_Auto_Labels extends Plugin {
     }
 
     // 新增：获取用户所有已有的标签
-    private function get_existing_labels($owner_uid) {
-        // 随机选择最多 1000 个标签
-        $sth = $this->pdo->prepare("SELECT caption FROM ttrss_labels2 WHERE owner_uid = ? ORDER BY RAND() LIMIT 300");
-        $sth->execute([$owner_uid]);
+    // private function get_existing_labels($owner_uid) {
+    //     // 随机选择最多 1000 个标签
+    //     $sth = $this->pdo->prepare("SELECT caption FROM ttrss_labels2 WHERE owner_uid = ? ORDER BY RAND() LIMIT 300");
+    //     $sth->execute([$owner_uid]);
     
-        $labels = array();
-        while ($row = $sth->fetch()) {
-            $labels[] = $row['caption'];
-        }
+    //     $labels = array();
+    //     while ($row = $sth->fetch()) {
+    //         $labels[] = $row['caption'];
+    //     }
     
-        return $labels;
-    }
+    //     return $labels;
+    // }
 
 
-    private function call_openai_api($text, $existing_labels) {
+    private function call_openai_api($text) {
         $url = rtrim($this->openai_base_url, '/') . '/chat/completions';
 
         $text = mb_substr($text, 0, $this->max_text_length);
@@ -61,13 +61,12 @@ class OpenAI_Auto_Labels extends Plugin {
         $system_prompt = 'You are a bot in a read-it-later app and your responsibility is to help with automatic tagging.';
 
         // 修改提示，包含现有标签和目标语言
-        $existing_labels_json = json_encode($existing_labels, JSON_UNESCAPED_UNICODE);
+        // $existing_labels_json = json_encode($existing_labels, JSON_UNESCAPED_UNICODE);
         $language = $this->label_language == "auto"? "English" : $this->label_language;
         $max_labels = $this->max_labels;
 
         $user_prompt = <<<EOT
     Please analyze the text between the sentences "CONTENT START HERE" and "CONTENT END HERE" and suggest relevant tags. Here are the existing tags in the system:
-    $existing_labels_json
 
     The rules are:
     - First, try to use appropriate tags from the existing tags list provided above.
@@ -180,9 +179,9 @@ class OpenAI_Auto_Labels extends Plugin {
             }
 
             $all_tags = array();
-            if (isset($content['existing_tags']) && is_array($content['existing_tags'])) {
-                $all_tags = array_merge($all_tags, $content['existing_tags']);
-            }
+            // if (isset($content['existing_tags']) && is_array($content['existing_tags'])) {
+            //     $all_tags = array_merge($all_tags, $content['existing_tags']);
+            // }
             if (isset($content['new_tags']) && is_array($content['new_tags'])) {
                 $all_tags = array_merge($all_tags, $content['new_tags']);
             }
@@ -291,10 +290,10 @@ class OpenAI_Auto_Labels extends Plugin {
         $content = $article["title"] . "\n" . strip_tags($article["content"]);
 
         // 获取现有标签
-        $existing_labels = $this->get_existing_labels($owner_uid);
+        // $existing_labels = $this->get_existing_labels($owner_uid);
 
         // 调用OpenAI API获取标签，传入现有标签
-        $suggested_tags = $this->call_openai_api($content, $existing_labels);
+        $suggested_tags = $this->call_openai_api($content);
 
         if (!empty($suggested_tags)) {
             foreach ($suggested_tags as $tag) {
